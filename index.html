@@ -266,6 +266,10 @@
     const HEIGHT = canvas.height;
     const GROUND_Y = 286;
     const BEST_KEY = "sunset-sprint-best";
+    const START_SPEED = 5.4;
+    const SPEED_GAIN = 0.0016;
+    const GRAVITY = 0.63;
+    const JUMP_FORCE = 13.8;
 
     function loadBestScore() {
       try {
@@ -351,9 +355,9 @@
     const state = {
       started: false,
       gameOver: false,
-      speed: 6.6,
-      gravity: 0.84,
-      jumpForce: 15.8,
+      speed: START_SPEED,
+      gravity: GRAVITY,
+      jumpForce: JUMP_FORCE,
       score: 0,
       best: loadBestScore(),
       frame: 0,
@@ -371,7 +375,7 @@
     function resetGame() {
       state.started = false;
       state.gameOver = false;
-      state.speed = 6.6;
+      state.speed = START_SPEED;
       state.score = 0;
       state.frame = 0;
       state.spawnTimer = 0;
@@ -546,7 +550,7 @@
         return;
       }
 
-      state.speed += 0.0022 * dt;
+      state.speed += SPEED_GAIN * dt;
       state.score += state.speed * 0.115 * dt;
       scoreEl.textContent = Math.floor(state.score);
 
