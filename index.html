@@ -241,13 +241,13 @@
       <div class="overlay" aria-live="polite">
         <div class="overlay-card" id="overlayCard">
           <h2 id="overlayTitle">Spaceでスタート</h2>
-          <p id="overlayText">`Space` / `↑` / 画面タップでジャンプ。障害物を避けながらスコアを伸ばせます。</p>
+          <p id="overlayText">`Space` / `↑` / 長押しタップでジャンプ量を調整。押し続けても一定以上は高くなりません。</p>
         </div>
       </div>
     </section>
 
     <section class="footer">
-      <div class="hint">操作: `Space` / `↑` / 画面タップ / ボタン</div>
+      <div class="hint">操作: `Space` / `↑` / 画面タップ / ボタン。長押しで高く、短押しで低く。</div>
       <button id="actionButton" type="button">ジャンプ / リスタート</button>
     </section>
   </main>
@@ -270,6 +270,9 @@
     const SPEED_GAIN = 0.0016;
     const GRAVITY = 0.63;
     const JUMP_FORCE = 13.8;
+    const MAX_JUMP_HOLD = 10.5;
+    const JUMP_HOLD_BOOST = 0.34;
+    const JUMP_RELEASE_GRAVITY = 0.38;
 
     function loadBestScore() {
       try {
@@ -349,8 +352,11 @@
       width: 64,
       height: 64,
       vy: 0,
-      grounded: true
+      grounded: true,
+      jumpHoldTime: 0
     };
+
+    const activeJumpInputs = new Set();
 
     const state = {
       started: false,
@@ -385,10 +391,11 @@
       player.y = GROUND_Y - player.height;
       player.vy = 0;
       player.grounded = true;
+      player.jumpHoldTime = 0;
       scoreEl.textContent = "0";
       setOverlay(
         "Spaceでスタート",
-        "`Space` / `↑` / 画面タップでジャンプ。障害物を避けながら走り続けよう。",
+        "`Space` / `↑` / 長押しタップでジャンプ量を調整。押し続けても一定以上は高くなりません。",
         true
       );
     }
@@ -469,10 +476,17 @@
 
       player.vy = -state.jumpForce;
       player.grounded = false;
+      player.jumpHoldTime = 0;
       createDust(player.x + 18, GROUND_Y - 6, 6);
     }
 
-    function handleAction() {
+    function beginAction(inputId) {
+      if (activeJumpInputs.has(inputId)) {
+        return;
+      }
+
+      activeJumpInputs.add(inputId);
+
       if (state.gameOver) {
         resetGame();
         state.started = true;
@@ -489,15 +503,20 @@
       jump();
     }
 
+    function endAction(inputId) {
+      activeJumpInputs.delete(inputId);
+    }
+
     function endGame() {
       state.gameOver = true;
       state.started = false;
+      activeJumpInputs.clear();
       state.best = Math.max(state.best, state.score);
       saveBestScore(state.best);
       bestEl.textContent = Math.floor(state.best);
       setOverlay(
         "Game Over",
-        "もう一度走るには `Space` / `↑` / タップ。ベストスコア更新を狙えます。",
+        "もう一度走るには `Space` / `↑` / タップ。長押しで高く、短押しで低く跳べます。",
         true
       );
       createDust(player.x + player.width * 0.6, player.y + player.height, 14);
@@ -555,6 +574,16 @@
       scoreEl.textContent = Math.floor(state.score);
 
       player.vy += state.gravity * dt;
+
+      if (!player.grounded && player.vy < 0) {
+        if (activeJumpInputs.size > 0 && player.jumpHoldTime < MAX_JUMP_HOLD) {
+          player.vy -= JUMP_HOLD_BOOST * dt;
+          player.jumpHoldTime += dt;
+        } else if (activeJumpInputs.size === 0) {
+          player.vy += JUMP_RELEASE_GRAVITY * dt;
+        }
+      }
+
       player.y += player.vy * dt;
 
       if (player.y >= GROUND_Y - player.height) {
@@ -564,6 +593,7 @@
         player.y = GROUND_Y - player.height;
         player.vy = 0;
         player.grounded = true;
+        player.jumpHoldTime = 0;
       }
 
       state.spawnTimer += dt;
@@ -810,16 +840,47 @@
     window.addEventListener("keydown", (event) => {
       if (event.code === "Space" || event.code === "ArrowUp") {
         event.preventDefault();
-        handleAction();
+        beginAction(`key-${event.code}`);
+      }
+    });
+
+    window.addEventListener("keyup", (event) => {
+      if (event.code === "Space" || event.code === "ArrowUp") {
+        endAction(`key-${event.code}`);
       }
     });
 
     canvas.addEventListener("pointerdown", (event) => {
       event.preventDefault();
-      handleAction();
+      canvas.setPointerCapture(event.pointerId);
+      beginAction(`canvas-${event.pointerId}`);
     });
 
-    actionButton.addEventListener("click", handleAction);
+    canvas.addEventListener("pointerup", (event) => {
+      endAction(`canvas-${event.pointerId}`);
+    });
+
+    canvas.addEventListener("pointercancel", (event) => {
+      endAction(`canvas-${event.pointerId}`);
+    });
+
+    actionButton.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      actionButton.setPointerCapture(event.pointerId);
+      beginAction(`button-${event.pointerId}`);
+    });
+
+    actionButton.addEventListener("pointerup", (event) => {
+      endAction(`button-${event.pointerId}`);
+    });
+
+    actionButton.addEventListener("pointercancel", (event) => {
+      endAction(`button-${event.pointerId}`);
+    });
+
+    window.addEventListener("blur", () => {
+      activeJumpInputs.clear();
+    });
 
     resetGame();
     requestAnimationFrame(loop);
