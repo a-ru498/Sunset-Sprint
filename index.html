@@ -32,7 +32,6 @@
         radial-gradient(circle at top, rgba(255, 255, 255, 0.5), transparent 40%),
         linear-gradient(180deg, #f9d18d 0%, #f0a45a 38%, #d96d3d 65%, #7d4125 100%);
     }
-
     .game-shell {
       width: min(100%, 980px);
       padding: 20px;
@@ -195,6 +194,18 @@
       transform: translateY(0);
     }
 
+
+    @keyframes shake {
+      10%, 90% { transform: translate3d(-2px, 0, 0); }
+      20%, 80% { transform: translate3d(4px, 0, 0); }
+      30%, 50%, 70% { transform: translate3d(-6px, 0, 0); }
+      40%, 60% { transform: translate3d(6px, 0, 0); }
+    }
+
+    .shake {
+      animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both;
+    }
+
     @media (max-width: 700px) {
       body {
         padding: 12px;
@@ -240,14 +251,14 @@
       ></canvas>
       <div class="overlay" aria-live="polite">
         <div class="overlay-card" id="overlayCard">
-          <h2 id="overlayTitle">Spaceでスタート</h2>
-          <p id="overlayText">`Space` / `↑` / 長押しタップでジャンプ量を調整。押し続けても一定以上は高くなりません。</p>
+          <h2 id="overlayTitle">Space / ↑ でスタート</h2>
+          <p id="overlayText">`Space` / `↑` / タップでジャンプ。`↓` でしゃがむ（空中では急降下します）。</p>
         </div>
       </div>
     </section>
 
     <section class="footer">
-      <div class="hint">操作: `Space` / `↑` / 画面タップ / ボタン。長押しで高く、短押しで低く。</div>
+      <div class="hint">操作: `Space`/`↑`/タップでジャンプ。`↓`でしゃがむ。長押しで高く跳べます。</div>
       <button id="actionButton" type="button">ジャンプ / リスタート</button>
     </section>
   </main>
@@ -262,8 +273,14 @@
     const overlayText = document.getElementById("overlayText");
     const actionButton = document.getElementById("actionButton");
 
-    const WIDTH = canvas.width;
-    const HEIGHT = canvas.height;
+    const dpr = window.devicePixelRatio || 1;
+    const WIDTH = 960;
+    const HEIGHT = 360;
+    canvas.width = WIDTH * dpr;
+    canvas.height = HEIGHT * dpr;
+    canvas.style.width = '100%';
+    canvas.style.height = 'auto';
+    ctx.scale(dpr, dpr);
     const GROUND_Y = 286;
     const BEST_KEY = "sunset-sprint-best";
     const START_SPEED = 5.4;
@@ -273,6 +290,46 @@
     const MAX_JUMP_HOLD = 10.5;
     const JUMP_HOLD_BOOST = 0.34;
     const JUMP_RELEASE_GRAVITY = 0.38;
+    const MAX_SPEED = 14.0;
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    function playSound(type) {
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      const osc = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      osc.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      const now = audioCtx.currentTime;
+      if (type === 'jump') {
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(150, now);
+        osc.frequency.exponentialRampToValueAtTime(300, now + 0.1);
+        gainNode.gain.setValueAtTime(0.08, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+        osc.start(now);
+        osc.stop(now + 0.1);
+      } else if (type === 'hit') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(150, now);
+        osc.frequency.exponentialRampToValueAtTime(50, now + 0.2);
+        gainNode.gain.setValueAtTime(0.2, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+        osc.start(now);
+        osc.stop(now + 0.2);
+      } else if (type === 'score') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(660, now);
+        osc.frequency.setValueAtTime(880, now + 0.1);
+        gainNode.gain.setValueAtTime(0.2, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+        osc.start(now);
+        osc.stop(now + 0.2);
+      }
+    }
 
     function loadBestScore() {
       try {
@@ -353,10 +410,14 @@
       height: 64,
       vy: 0,
       grounded: true,
-      jumpHoldTime: 0
+      jumpHoldTime: 0,
+      ducking: false
     };
 
     const activeJumpInputs = new Set();
+    const activeDuckInputs = new Set();
+
+    let isPaused = false;
 
     const state = {
       started: false,
@@ -392,10 +453,11 @@
       player.vy = 0;
       player.grounded = true;
       player.jumpHoldTime = 0;
+      player.ducking = false;
       scoreEl.textContent = "0";
       setOverlay(
-        "Spaceでスタート",
-        "`Space` / `↑` / 長押しタップでジャンプ量を調整。押し続けても一定以上は高くなりません。",
+        "Space / ↑ でスタート",
+        "`Space` / `↑` / タップでジャンプ。`↓` でしゃがむ（空中では急降下します）。",
         true
       );
     }
@@ -411,10 +473,16 @@
       const spawnBird = birdUnlocked && Math.random() < 0.28;
 
       if (spawnBird) {
+        const heights = [
+          GROUND_Y - 110, // High (jump hits it, run under it)
+          GROUND_Y - 70,  // Medium (must duck)
+          GROUND_Y - 34   // Low (must jump)
+        ];
+        const birdY = heights[Math.floor(Math.random() * heights.length)];
         state.obstacles.push({
           type: "bird",
           x: WIDTH + random(20, 90),
-          y: GROUND_Y - random(116, 150),
+          y: birdY,
           width: 64,
           height: 38
         });
@@ -434,6 +502,14 @@
     }
 
     function getPlayerHitbox() {
+      if (player.ducking) {
+        return {
+          x: player.x + 10,
+          y: player.y + 34,
+          width: player.width - 2,
+          height: player.height - 34
+        };
+      }
       return {
         x: player.x + 10,
         y: player.y + 8,
@@ -470,22 +546,35 @@
     }
 
     function jump() {
-      if (!player.grounded) {
+      if (!player.grounded || player.ducking) {
         return;
       }
-
+      
+      playSound('jump');
       player.vy = -state.jumpForce;
       player.grounded = false;
       player.jumpHoldTime = 0;
       createDust(player.x + 18, GROUND_Y - 6, 6);
     }
 
-    function beginAction(inputId) {
+    function beginAction(inputId, type = "jump") {
+      if (type === "duck") {
+        activeDuckInputs.add(inputId);
+        return;
+      }
+
       if (activeJumpInputs.has(inputId)) {
         return;
       }
 
       activeJumpInputs.add(inputId);
+
+      if (isPaused) {
+        isPaused = false;
+        previousTime = performance.now();
+        setOverlay("", "", false);
+        return;
+      }
 
       if (state.gameOver) {
         resetGame();
@@ -496,6 +585,7 @@
       }
 
       if (!state.started) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
         state.started = true;
         setOverlay("", "", false);
       }
@@ -503,23 +593,33 @@
       jump();
     }
 
-    function endAction(inputId) {
-      activeJumpInputs.delete(inputId);
+    function endAction(inputId, type = "jump") {
+      if (type === "duck") {
+        activeDuckInputs.delete(inputId);
+      } else {
+        activeJumpInputs.delete(inputId);
+      }
     }
 
     function endGame() {
       state.gameOver = true;
       state.started = false;
       activeJumpInputs.clear();
+      activeDuckInputs.clear();
       state.best = Math.max(state.best, state.score);
       saveBestScore(state.best);
       bestEl.textContent = Math.floor(state.best);
       setOverlay(
         "Game Over",
-        "もう一度走るには `Space` / `↑` / タップ。長押しで高く、短押しで低く跳べます。",
+        "もう一度走るには `Space` / `↑` / タップ。`↓`でしゃがみます。",
         true
       );
       createDust(player.x + player.width * 0.6, player.y + player.height, 14);
+      
+      playSound('hit');
+      const gameStage = document.querySelector('.game-stage');
+      gameStage.classList.add('shake');
+      setTimeout(() => gameStage.classList.remove('shake'), 400);
     }
 
     function updateWorld(speed, dt) {
@@ -569,17 +669,30 @@
         return;
       }
 
-      state.speed += SPEED_GAIN * dt;
+      player.ducking = activeDuckInputs.size > 0;
+
+      state.speed = Math.min(state.speed + SPEED_GAIN * dt, MAX_SPEED);
+      const oldScoreFloor = Math.floor(state.score);
       state.score += state.speed * 0.115 * dt;
-      scoreEl.textContent = Math.floor(state.score);
+      const newScoreFloor = Math.floor(state.score);
+      
+      if (newScoreFloor > oldScoreFloor && newScoreFloor % 100 === 0 && newScoreFloor > 0) {
+        playSound('score');
+      }
+      
+      scoreEl.textContent = newScoreFloor;
 
       player.vy += state.gravity * dt;
 
+      if (player.ducking && !player.grounded) {
+        player.vy += 1.8 * dt;
+      }
+
       if (!player.grounded && player.vy < 0) {
-        if (activeJumpInputs.size > 0 && player.jumpHoldTime < MAX_JUMP_HOLD) {
+        if (activeJumpInputs.size > 0 && player.jumpHoldTime < MAX_JUMP_HOLD && !player.ducking) {
           player.vy -= JUMP_HOLD_BOOST * dt;
           player.jumpHoldTime += dt;
-        } else if (activeJumpInputs.size === 0) {
+        } else if (activeJumpInputs.size === 0 || player.ducking) {
           player.vy += JUMP_RELEASE_GRAVITY * dt;
         }
       }
@@ -702,31 +815,56 @@
 
       ctx.fillStyle = "#2f2418";
 
-      ctx.beginPath();
-      ctx.moveTo(8, 44);
-      ctx.lineTo(-10, 36);
-      ctx.lineTo(10, 30);
-      ctx.closePath();
-      ctx.fill();
+      if (player.ducking && player.grounded) {
+        ctx.beginPath();
+        ctx.moveTo(34, 44);
+        ctx.lineTo(16, 36);
+        ctx.lineTo(36, 30);
+        ctx.closePath();
+        ctx.fill();
 
-      roundRectPath(ctx, 12, 20, 32, 28, 10);
-      ctx.fill();
+        roundRectPath(ctx, 4, 30, 44, 20, 8);
+        ctx.fill();
 
-      roundRectPath(ctx, 34, 2, 24, 28, 8);
-      ctx.fill();
+        roundRectPath(ctx, 46, 26, 28, 20, 8);
+        ctx.fill();
 
-      ctx.fillRect(56, 12, 10, 8);
-      ctx.fillRect(24, 10, 10, 16);
+        ctx.fillStyle = "#fff6ea";
+        ctx.fillRect(58, 30, 4, 4);
 
-      ctx.fillStyle = "#fff6ea";
-      ctx.fillRect(47, 10, 4, 4);
+        ctx.fillStyle = "#2f2418";
+        const legSwing = player.grounded ? runCycle * 10 : -4;
+        ctx.fillRect(18, 50, 8, 14 + legSwing);
+        ctx.fillRect(34, 50, 8, 14 - legSwing);
+        ctx.fillRect(18, 64 + legSwing, 16, 6);
+        ctx.fillRect(34, 64 - legSwing, 16, 6);
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(8, 44);
+        ctx.lineTo(-10, 36);
+        ctx.lineTo(10, 30);
+        ctx.closePath();
+        ctx.fill();
 
-      ctx.fillStyle = "#2f2418";
-      const legSwing = player.grounded ? runCycle * 10 : -4;
-      ctx.fillRect(18, 46, 8, 18 + legSwing);
-      ctx.fillRect(34, 46, 8, 18 - legSwing);
-      ctx.fillRect(18, 62 + legSwing, 16, 6);
-      ctx.fillRect(34, 62 - legSwing, 16, 6);
+        roundRectPath(ctx, 12, 20, 32, 28, 10);
+        ctx.fill();
+
+        roundRectPath(ctx, 34, 2, 24, 28, 8);
+        ctx.fill();
+
+        ctx.fillRect(56, 12, 10, 8);
+        ctx.fillRect(24, 10, 10, 16);
+
+        ctx.fillStyle = "#fff6ea";
+        ctx.fillRect(47, 10, 4, 4);
+
+        ctx.fillStyle = "#2f2418";
+        const legSwing = player.grounded ? runCycle * 10 : -4;
+        ctx.fillRect(18, 46, 8, 18 + legSwing);
+        ctx.fillRect(34, 46, 8, 18 - legSwing);
+        ctx.fillRect(18, 62 + legSwing, 16, 6);
+        ctx.fillRect(34, 62 - legSwing, 16, 6);
+      }
 
       ctx.restore();
     }
@@ -832,7 +970,9 @@
     function loop(now) {
       const delta = now - previousTime;
       previousTime = now;
-      update(delta);
+      if (!isPaused) {
+        update(delta);
+      }
       draw();
       requestAnimationFrame(loop);
     }
@@ -840,13 +980,18 @@
     window.addEventListener("keydown", (event) => {
       if (event.code === "Space" || event.code === "ArrowUp") {
         event.preventDefault();
-        beginAction(`key-${event.code}`);
+        beginAction(`key-${event.code}`, "jump");
+      } else if (event.code === "ArrowDown") {
+        event.preventDefault();
+        beginAction(`key-${event.code}`, "duck");
       }
     });
 
     window.addEventListener("keyup", (event) => {
       if (event.code === "Space" || event.code === "ArrowUp") {
-        endAction(`key-${event.code}`);
+        endAction(`key-${event.code}`, "jump");
+      } else if (event.code === "ArrowDown") {
+        endAction(`key-${event.code}`, "duck");
       }
     });
 
@@ -880,6 +1025,14 @@
 
     window.addEventListener("blur", () => {
       activeJumpInputs.clear();
+      activeDuckInputs.clear();
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && state.started && !state.gameOver) {
+        isPaused = true;
+        setOverlay("一時停止", "画面をタップするかSpaceキーで再開します", true);
+      }
     });
 
     resetGame();
