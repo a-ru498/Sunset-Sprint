@@ -291,6 +291,8 @@
     const JUMP_HOLD_BOOST = 0.34;
     const JUMP_RELEASE_GRAVITY = 0.38;
     const MAX_SPEED = 14.0;
+    const FIXED_STEP_MS = 1000 / 60;
+    const MAX_FRAME_DELTA_MS = 100;
 
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     
@@ -572,6 +574,7 @@
       if (isPaused) {
         isPaused = false;
         previousTime = performance.now();
+        accumulatedTime = 0;
         setOverlay("", "", false);
         return;
       }
@@ -659,8 +662,8 @@
       });
     }
 
-    function update(delta) {
-      const dt = clamp(delta / 16.67, 0.7, 1.8);
+    function update() {
+      const dt = 1;
       state.frame += dt;
       updateWorld(state.speed, dt);
       updateDust(dt);
@@ -966,13 +969,20 @@
     }
 
     let previousTime = performance.now();
+    let accumulatedTime = 0;
 
     function loop(now) {
-      const delta = now - previousTime;
+      const delta = Math.min(now - previousTime, MAX_FRAME_DELTA_MS);
       previousTime = now;
+
       if (!isPaused) {
-        update(delta);
+        accumulatedTime += delta;
+        while (accumulatedTime >= FIXED_STEP_MS) {
+          update();
+          accumulatedTime -= FIXED_STEP_MS;
+        }
       }
+
       draw();
       requestAnimationFrame(loop);
     }
