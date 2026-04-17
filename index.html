@@ -46,8 +46,12 @@
     <section class="ranking-panel" aria-labelledby="rankingTitle">
       <div class="ranking-header">
         <h2 class="ranking-title" id="rankingTitle">スコアランキング</h2>
-        <p class="ranking-note">世界中のプレイヤーとスコアを競おう！（上位10件まで表示）</p>
+        <div class="ranking-toggle">
+          <button type="button" class="toggle-btn active" id="btnTop10">Top 10</button>
+          <button type="button" class="toggle-btn" id="btnTop100">Top 100</button>
+        </div>
       </div>
+      <p class="ranking-note" id="rankingNote">世界中のプレイヤーとスコアを競おう！（上位10件まで表示）</p>
       <ol class="ranking-list" id="rankingList">
         <li class="ranking-empty">まだスコア記録がありません。</li>
       </ol>
@@ -92,7 +96,8 @@
     const GROUND_Y = 286;
     const BEST_KEY = "sunset-sprint-best";
     const RANKING_KEY = "sunset-sprint-ranking";
-    const MAX_RANKING_ITEMS = 10;
+    let rankingLimit = 10;
+    const SCORE_ENTRY_THRESHOLD = 10; // Top 10 gets to enter their name
     const START_SPEED = 5.4;
     const SPEED_GAIN = 0.0016;
     const GRAVITY = 0.63;
@@ -159,15 +164,21 @@
       }
     }
 
-    async function loadRanking() {
+    let unsubscribeRanking = null;
+
+    async function loadRanking(maxItems = 10) {
       try {
+        if (unsubscribeRanking) {
+          unsubscribeRanking();
+        }
+
         const emptyItem = document.createElement("li");
         emptyItem.className = "ranking-empty";
         emptyItem.textContent = "ランキング読み込み中...";
         rankingListEl.replaceChildren(emptyItem);
 
-        const q = query(collection(db, "scores"), orderBy("score", "desc"), limit(MAX_RANKING_ITEMS));
-        onSnapshot(q, (snapshot) => {
+        const q = query(collection(db, "scores"), orderBy("score", "desc"), limit(maxItems));
+        unsubscribeRanking = onSnapshot(q, (snapshot) => {
           const entries = [];
           snapshot.forEach((doc) => {
             const data = doc.data();
@@ -247,9 +258,11 @@
       const normalizedScore = Math.floor(score);
       if (normalizedScore <= 0) return;
 
-      const isTop5 = state.ranking.length < MAX_RANKING_ITEMS || normalizedScore > (state.ranking[state.ranking.length - 1]?.score || 0);
+      // We always check if the score qualifies for the top 10 to prompt for name
+      // This is independent of the current view limit
+      const isTopTier = state.ranking.length < SCORE_ENTRY_THRESHOLD || normalizedScore > (state.ranking[Math.min(state.ranking.length, SCORE_ENTRY_THRESHOLD) - 1]?.score || 0);
 
-      if (isTop5) {
+      if (isTopTier) {
         setTimeout(async () => {
           const playerName = prompt(`🎉 ランクインしました！（スコア: ${normalizedScore}）\nランキングに登録するお名前を入力してください:`, "ゲスト");
           if (playerName !== null) {
@@ -362,7 +375,26 @@
     state.best = Math.max(state.best, 0);
     saveBestScore(state.best);
     bestEl.textContent = Math.floor(state.best);
-    loadRanking();
+    loadRanking(rankingLimit);
+
+    // Ranking toggle controls
+    const btnTop10 = document.getElementById("btnTop10");
+    const btnTop100 = document.getElementById("btnTop100");
+    const rankingNote = document.getElementById("rankingNote");
+
+    function setRankingLimit(limit) {
+      if (rankingLimit === limit) return;
+      rankingLimit = limit;
+      
+      btnTop10.classList.toggle("active", limit === 10);
+      btnTop100.classList.toggle("active", limit === 100);
+      rankingNote.textContent = `世界中のプレイヤーとスコアを競おう！（上位${limit}件まで表示）`;
+      
+      loadRanking(limit);
+    }
+
+    btnTop10.addEventListener("click", () => setRankingLimit(10));
+    btnTop100.addEventListener("click", () => setRankingLimit(100));
 
     function resetGame() {
       state.started = false;
@@ -603,7 +635,7 @@
       state.score += state.speed * 0.115 * dt;
       const newScoreFloor = Math.floor(state.score);
 
-      if (newScoreFloor > oldScoreFloor && newScoreFloor % 100 === 0 && newScoreFloor > 0) {
+      if (newScoreFloor > oldScoreFloor && newScoreFloor % 500 === 0 && newScoreFloor > 0) {
         playSound('score');
       }
 
