@@ -321,6 +321,8 @@
       }
     }
   </style>
+  <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-firestore-compat.js"></script>
 </head>
 <body>
   <main class="game-shell">
@@ -328,7 +330,7 @@
       <div class="title-group">
         <div class="eyebrow">Mini Runner</div>
         <h1>Sunset Sprint</h1>
-        <p class="subtitle">Google Dinoっぽく遊べる、シンプルな横スクロールゲーム。</p>
+        <p class="subtitle">Google Dinoっぽく遊べる、シンプルな横スクロールゲーム。目指せ世界ランク入り！</p>
       </div>
       <div class="scoreboard">
         <div class="score-card">
@@ -365,7 +367,7 @@
     <section class="ranking-panel" aria-labelledby="rankingTitle">
       <div class="ranking-header">
         <h2 class="ranking-title" id="rankingTitle">スコアランキング</h2>
-        <p class="ranking-note">このブラウザに上位5件まで保存されます。</p>
+        <p class="ranking-note">世界中のプレイヤーとスコアを競おう！（上位10件まで表示）</p>
       </div>
       <ol class="ranking-list" id="rankingList">
         <li class="ranking-empty">まだスコア記録がありません。</li>
@@ -373,7 +375,23 @@
     </section>
   </main>
 
-  <script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, query, orderBy, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyApN4vGD-aZSEws7zrhx4haxuX_Kfkr9kM",
+      authDomain: "index-3183a.firebaseapp.com",
+      projectId: "index-3183a",
+      storageBucket: "index-3183a.firebasestorage.app",
+      messagingSenderId: "636647009228",
+      appId: "1:636647009228:web:c9d1c1533a6a5cd67acb69",
+      measurementId: "G-5SXEHBB0D4"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
     const canvas = document.getElementById("game");
     const ctx = canvas.getContext("2d");
     const scoreEl = document.getElementById("score");
@@ -395,7 +413,7 @@
     const GROUND_Y = 286;
     const BEST_KEY = "sunset-sprint-best";
     const RANKING_KEY = "sunset-sprint-ranking";
-    const MAX_RANKING_ITEMS = 5;
+    const MAX_RANKING_ITEMS = 10;
     const START_SPEED = 5.4;
     const SPEED_GAIN = 0.0016;
     const GRAVITY = 0.63;
@@ -462,31 +480,29 @@
       }
     }
 
-    function loadRanking() {
+    async function loadRanking() {
       try {
-        const savedRanking = JSON.parse(localStorage.getItem(RANKING_KEY) || "[]");
-        if (!Array.isArray(savedRanking)) {
-          return [];
-        }
+        const emptyItem = document.createElement("li");
+        emptyItem.className = "ranking-empty";
+        emptyItem.textContent = "ランキング読み込み中...";
+        rankingListEl.replaceChildren(emptyItem);
 
-        return savedRanking
-          .map((entry) => ({
-            score: Math.floor(Number(entry?.score) || 0),
-            playedAt: typeof entry?.playedAt === "string" ? entry.playedAt : ""
-          }))
-          .filter((entry) => entry.score > 0)
-          .sort((a, b) => b.score - a.score || b.playedAt.localeCompare(a.playedAt))
-          .slice(0, MAX_RANKING_ITEMS);
+        const q = query(collection(db, "scores"), orderBy("score", "desc"), limit(MAX_RANKING_ITEMS));
+        onSnapshot(q, (snapshot) => {
+          const entries = [];
+          snapshot.forEach((doc) => {
+            const data = doc.data();
+            entries.push({
+              name: data.name,
+              score: data.score,
+              playedAt: data.playedAt || new Date().toISOString()
+            });
+          });
+          state.ranking = entries;
+          renderRanking(state.ranking);
+        });
       } catch (error) {
-        return [];
-      }
-    }
-
-    function saveRanking(entries) {
-      try {
-        localStorage.setItem(RANKING_KEY, JSON.stringify(entries.slice(0, MAX_RANKING_ITEMS)));
-      } catch (error) {
-        return;
+        console.error("Error loading ranking:", error);
       }
     }
 
@@ -532,7 +548,7 @@
 
         const label = document.createElement("p");
         label.className = "ranking-label";
-        label.textContent = `${index + 1}位の記録`;
+        label.textContent = entry.name || "名無しランナー";
 
         const time = document.createElement("p");
         time.className = "ranking-time";
@@ -550,19 +566,27 @@
 
     function updateRanking(score) {
       const normalizedScore = Math.floor(score);
-      if (normalizedScore <= 0) {
-        return;
+      if (normalizedScore <= 0) return;
+
+      const isTop5 = state.ranking.length < MAX_RANKING_ITEMS || normalizedScore > (state.ranking[state.ranking.length - 1]?.score || 0);
+
+      if (isTop5) {
+        setTimeout(async () => {
+          const playerName = prompt(`🎉 ランクインしました！（スコア: ${normalizedScore}）\nランキングに登録するお名前を入力してください:`, "ゲスト");
+          if (playerName !== null) {
+            const name = playerName.trim().substring(0, 15) || "ゲスト";
+            try {
+              await addDoc(collection(db, "scores"), {
+                name: name,
+                score: normalizedScore,
+                playedAt: new Date().toISOString()
+              });
+            } catch (error) {
+              console.error("Error adding score: ", error);
+            }
+          }
+        }, 100);
       }
-
-      state.ranking = [...state.ranking, {
-        score: normalizedScore,
-        playedAt: new Date().toISOString()
-      }]
-        .sort((a, b) => b.score - a.score || b.playedAt.localeCompare(a.playedAt))
-        .slice(0, MAX_RANKING_ITEMS);
-
-      saveRanking(state.ranking);
-      renderRanking(state.ranking);
     }
 
     function random(min, max) {
@@ -645,7 +669,7 @@
       jumpForce: JUMP_FORCE,
       score: 0,
       best: loadBestScore(),
-      ranking: loadRanking(),
+      ranking: [],
       frame: 0,
       spawnTimer: 0,
       nextSpawn: 88,
@@ -656,10 +680,10 @@
       dust: []
     };
 
-    state.best = Math.max(state.best, state.ranking[0]?.score || 0);
+    state.best = Math.max(state.best, 0);
     saveBestScore(state.best);
     bestEl.textContent = Math.floor(state.best);
-    renderRanking(state.ranking);
+    loadRanking();
 
     function resetGame() {
       state.started = false;
