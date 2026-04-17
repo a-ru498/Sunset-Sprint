@@ -109,11 +109,44 @@
 
     .ranking-header {
       display: flex;
-      align-items: baseline;
+      align-items: center;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
       flex-wrap: wrap;
+    }
+
+    .ranking-toggle {
+      display: flex;
+      background: rgba(87, 53, 22, 0.06);
+      padding: 4px;
+      border-radius: 999px;
+      gap: 4px;
+    }
+
+    .toggle-btn {
+      border: 0;
+      padding: 6px 14px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      border-radius: 999px;
+      background: transparent;
+      color: rgba(46, 36, 24, 0.6);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: none;
+    }
+
+    .toggle-btn:hover {
+      background: rgba(255, 255, 255, 0.4);
+      color: var(--ink);
+      transform: none;
+    }
+
+    .toggle-btn.active {
+      background: white;
+      color: var(--accent);
+      box-shadow: 0 4px 12px rgba(87, 53, 22, 0.1);
     }
 
     .ranking-title {
