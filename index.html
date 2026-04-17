@@ -106,6 +106,98 @@
       font-size: 1.45rem;
     }
 
+    .ranking-panel {
+      margin-top: 18px;
+      padding: 18px;
+      border-radius: 22px;
+      background: rgba(255, 252, 245, 0.62);
+      border: 1px solid rgba(87, 53, 22, 0.12);
+    }
+
+    .ranking-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .ranking-title {
+      margin: 0;
+      font-size: 1.1rem;
+    }
+
+    .ranking-note {
+      margin: 0;
+      font-size: 0.9rem;
+      color: rgba(46, 36, 24, 0.62);
+    }
+
+    .ranking-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 10px;
+    }
+
+    .ranking-item,
+    .ranking-empty {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(87, 53, 22, 0.08);
+    }
+
+    .ranking-empty {
+      grid-template-columns: 1fr;
+      text-align: center;
+      color: rgba(46, 36, 24, 0.68);
+    }
+
+    .ranking-position {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: linear-gradient(180deg, #f3c36d 0%, #d78443 100%);
+      color: #fff8ee;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .ranking-meta {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .ranking-label,
+    .ranking-time {
+      margin: 0;
+    }
+
+    .ranking-label {
+      font-weight: 700;
+    }
+
+    .ranking-time {
+      font-size: 0.84rem;
+      color: rgba(46, 36, 24, 0.58);
+    }
+
+    .ranking-score {
+      font-size: 1.05rem;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+    }
+
     .game-stage {
       position: relative;
       border-radius: 24px;
@@ -219,6 +311,14 @@
       .score-card {
         min-width: 106px;
       }
+
+      .ranking-item {
+        grid-template-columns: auto 1fr;
+      }
+
+      .ranking-score {
+        grid-column: 2;
+      }
     }
   </style>
 </head>
@@ -261,6 +361,16 @@
       <div class="hint">操作: `Space`/`↑`/タップでジャンプ。`↓`でしゃがむ。長押しで高く跳べます。</div>
       <button id="actionButton" type="button">ジャンプ / リスタート</button>
     </section>
+
+    <section class="ranking-panel" aria-labelledby="rankingTitle">
+      <div class="ranking-header">
+        <h2 class="ranking-title" id="rankingTitle">スコアランキング</h2>
+        <p class="ranking-note">このブラウザに上位5件まで保存されます。</p>
+      </div>
+      <ol class="ranking-list" id="rankingList">
+        <li class="ranking-empty">まだスコア記録がありません。</li>
+      </ol>
+    </section>
   </main>
 
   <script>
@@ -272,6 +382,7 @@
     const overlayTitle = document.getElementById("overlayTitle");
     const overlayText = document.getElementById("overlayText");
     const actionButton = document.getElementById("actionButton");
+    const rankingListEl = document.getElementById("rankingList");
 
     const dpr = window.devicePixelRatio || 1;
     const WIDTH = 960;
@@ -283,6 +394,8 @@
     ctx.scale(dpr, dpr);
     const GROUND_Y = 286;
     const BEST_KEY = "sunset-sprint-best";
+    const RANKING_KEY = "sunset-sprint-ranking";
+    const MAX_RANKING_ITEMS = 5;
     const START_SPEED = 5.4;
     const SPEED_GAIN = 0.0016;
     const GRAVITY = 0.63;
@@ -347,6 +460,109 @@
       } catch (error) {
         return;
       }
+    }
+
+    function loadRanking() {
+      try {
+        const savedRanking = JSON.parse(localStorage.getItem(RANKING_KEY) || "[]");
+        if (!Array.isArray(savedRanking)) {
+          return [];
+        }
+
+        return savedRanking
+          .map((entry) => ({
+            score: Math.floor(Number(entry?.score) || 0),
+            playedAt: typeof entry?.playedAt === "string" ? entry.playedAt : ""
+          }))
+          .filter((entry) => entry.score > 0)
+          .sort((a, b) => b.score - a.score || b.playedAt.localeCompare(a.playedAt))
+          .slice(0, MAX_RANKING_ITEMS);
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function saveRanking(entries) {
+      try {
+        localStorage.setItem(RANKING_KEY, JSON.stringify(entries.slice(0, MAX_RANKING_ITEMS)));
+      } catch (error) {
+        return;
+      }
+    }
+
+    function formatPlayedAt(value) {
+      if (!value) {
+        return "保存済みスコア";
+      }
+
+      const playedAt = new Date(value);
+      if (Number.isNaN(playedAt.getTime())) {
+        return "保存済みスコア";
+      }
+
+      return new Intl.DateTimeFormat("ja-JP", {
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      }).format(playedAt);
+    }
+
+    function renderRanking(entries) {
+      rankingListEl.replaceChildren();
+
+      if (!entries.length) {
+        const emptyItem = document.createElement("li");
+        emptyItem.className = "ranking-empty";
+        emptyItem.textContent = "まだスコア記録がありません。";
+        rankingListEl.append(emptyItem);
+        return;
+      }
+
+      entries.forEach((entry, index) => {
+        const item = document.createElement("li");
+        item.className = "ranking-item";
+
+        const position = document.createElement("div");
+        position.className = "ranking-position";
+        position.textContent = String(index + 1);
+
+        const meta = document.createElement("div");
+        meta.className = "ranking-meta";
+
+        const label = document.createElement("p");
+        label.className = "ranking-label";
+        label.textContent = `${index + 1}位の記録`;
+
+        const time = document.createElement("p");
+        time.className = "ranking-time";
+        time.textContent = formatPlayedAt(entry.playedAt);
+
+        const score = document.createElement("div");
+        score.className = "ranking-score";
+        score.textContent = `${entry.score} pts`;
+
+        meta.append(label, time);
+        item.append(position, meta, score);
+        rankingListEl.append(item);
+      });
+    }
+
+    function updateRanking(score) {
+      const normalizedScore = Math.floor(score);
+      if (normalizedScore <= 0) {
+        return;
+      }
+
+      state.ranking = [...state.ranking, {
+        score: normalizedScore,
+        playedAt: new Date().toISOString()
+      }]
+        .sort((a, b) => b.score - a.score || b.playedAt.localeCompare(a.playedAt))
+        .slice(0, MAX_RANKING_ITEMS);
+
+      saveRanking(state.ranking);
+      renderRanking(state.ranking);
     }
 
     function random(min, max) {
@@ -429,6 +645,7 @@
       jumpForce: JUMP_FORCE,
       score: 0,
       best: loadBestScore(),
+      ranking: loadRanking(),
       frame: 0,
       spawnTimer: 0,
       nextSpawn: 88,
@@ -439,7 +656,10 @@
       dust: []
     };
 
+    state.best = Math.max(state.best, state.ranking[0]?.score || 0);
+    saveBestScore(state.best);
     bestEl.textContent = Math.floor(state.best);
+    renderRanking(state.ranking);
 
     function resetGame() {
       state.started = false;
@@ -612,6 +832,7 @@
       state.best = Math.max(state.best, state.score);
       saveBestScore(state.best);
       bestEl.textContent = Math.floor(state.best);
+      updateRanking(state.score);
       setOverlay(
         "Game Over",
         "もう一度走るには `Space` / `↑` / タップ。`↓`でしゃがみます。",
